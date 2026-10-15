@@ -1,0 +1,16 @@
+services:
+  demo_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rokonzaman/demo_app:latest
+    container_name: demo_app
+    init: true
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
