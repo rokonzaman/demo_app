@@ -22,12 +22,12 @@ flowchart LR
 
     subgraph C["GitHub Actions CI/CD"]
         direction LR
-        C1["1. Lint and basic checks<br/>ESLint, node --check"] --> C2["2. Build Docker image<br/>verify no build errors<br/>+ container smoke test"] --> C3["3. Tag and push<br/>latest + sha-xxxxxxxx"] --> C4["4. Deploy over SSH<br/>key auth, custom port"]
+        C1["1. Lint and basic checks<br/>ESLint, node --check"] --> C2["2. Build Docker image<br/>verify no build errors<br/>+ container smoke test"] --> C3["3. Tag and push<br/>1.0.0 + sha-xxxxxxxx"] --> C4["4. Deploy over SSH<br/>key auth, custom port"]
     end
 
     C3 -->|"docker push"| D[("Docker Hub<br/>rokonzaman/demo_app")]
     D -->|"docker pull"| E["VPS<br/>deployment host"]
-    C4 -->|"ssh -p <vps-port>"| E
+    C4 -->|"ssh on custom port"| E
     E --> F["Container<br/>demo_app<br/>:8080"]
 ```
 
@@ -39,8 +39,8 @@ Triggers on every push to `main` (and manual `workflow_dispatch`).
 | --- | --- |
 | `lint` | `npm ci`, ESLint, `node --check server.js` |
 | `build` | Builds the Docker image with Buildx (no push) to verify there are no build errors, then starts the container and checks the JSON response |
-| `push-image` | Logs in to Docker Hub as `rokonzaman`, tags the image `latest` and `sha-<short-sha>`, and pushes it to `rokonzaman/demo_app` |
-| `deploy` | Installs Docker and Docker Compose on the VPS if missing, deploys to `/opt/demo_app` over SSH with key auth on a custom port (all via `sudo`), pulls `latest`, runs `docker compose up -d`, and verifies the JSON response |
+| `push-image` | Logs in to Docker Hub as `rokonzaman`, tags the image with the `package.json` version and `sha-<short-sha>`, and pushes it to `rokonzaman/demo_app` |
+| `deploy` | Installs Docker and Docker Compose on the VPS if missing, copies the repository's `docker-compose.yml` to `/opt/demo_app` over `scp` (key auth, custom port), runs `docker compose pull` and `up -d` with the `package.json` version tag via `sudo`, and verifies the JSON response |
 
 ### Required GitHub secrets and variables
 
@@ -61,9 +61,18 @@ Variables (non-sensitive, plaintext):
 | `VPS_USER` | SSH user on the VPS (e.g. `ubuntu`) |
 | `VPS_PORT` | Custom SSH port (e.g. `2222`) |
 
+### Versioning
+
+The image tag comes from `version` in `package.json` (currently `1.0.0`). To release a new version:
+
+1. Bump `version` in `package.json`
+2. Commit and push to `main`
+
+CI then pushes `rokonzaman/demo_app:<version>` (plus `sha-<short-sha>` for traceability) and deploys that exact version. CI always passes the `package.json` version as `IMAGE_TAG`; `docker-compose.yml` falls back to `1.0.0` for local runs, so export `IMAGE_TAG=<version>` if you want to build a different tag locally.
+
 ### Deploying to a VPS (SSH key auth, custom port)
 
-The `deploy` job runs automatically after `push-image`. It connects to the VPS with key auth on a custom SSH port, installs Docker and the Docker Compose plugin (Ubuntu/Debian) if they are missing, writes the Compose file to `/opt/demo_app`, and runs the stack with `sudo docker compose up -d`.
+The `deploy` job runs automatically after `push-image`. It connects to the VPS with key auth on a custom SSH port, installs Docker and the Docker Compose plugin (Ubuntu/Debian) if they are missing, copies `docker-compose.yml` from the repository to `/opt/demo_app`, and runs the stack with `sudo IMAGE_TAG=<package.json version> docker compose up -d`.
 
 Setup:
 
@@ -87,15 +96,15 @@ Manual deploy on the VPS, if needed:
 
 ```bash
 cd /opt/demo_app
-sudo docker compose pull
-sudo docker compose up -d
+sudo IMAGE_TAG=1.0.0 docker compose pull
+sudo IMAGE_TAG=1.0.0 docker compose up -d
 ```
 
 Standalone equivalent:
 
 ```bash
-sudo docker pull rokonzaman/demo_app:latest
+sudo docker pull rokonzaman/demo_app:1.0.0
 sudo docker rm -f demo_app
 sudo docker run -d --name demo_app -p 8080:8080 --restart unless-stopped \
-  rokonzaman/demo_app:latest
+  rokonzaman/demo_app:1.0.0
 ```

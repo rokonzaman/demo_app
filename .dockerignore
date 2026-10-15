@@ -1,8 +1,13 @@
 .git
+.github
 .gitignore
 .dockerignore
 Dockerfile
 docker-compose.yml
+eslint.config.js
 *.md
 node_modules
 npm-debug.log*
+.env
+deploy_key*
+*.pem
