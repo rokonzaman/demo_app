@@ -1,152 +1,147 @@
 # DevOps Intern Task
 
-Minimal Node.js service exposing `GET /`:
+A minimal Node.js web service that replies to `GET /` with:
 
 ```json
 {"message":"Hello from DevOps Intern Task!","status":"running"}
 ```
 
-## Run locally
+Around the app there is a production-ready container setup, a GitHub Actions pipeline
+that tests, builds, and ships the image to Docker Hub and a VPS, and a small Bash script
+that reports system health.
+
+## Repository layout
+
+```text
+.
+├── server.js                 # the app: one HTTP server, no dependencies
+├── Dockerfile                # multi-stage build, runs as non-root
+├── docker-compose.yml        # local run on port 8080
+├── .env                      # IMAGE_TAG for compose (no secrets)
+├── scripts/system_health.sh  # CPU / memory / disk reporter
+├── eslint.config.js
+├── package.json              # app version used as the image tag
+└── .github/workflows/ci.yml  # lint -> build -> push -> deploy
+```
+
+## Run it locally
 
 ```bash
 docker compose up -d --build
 curl http://localhost:8080/
+# {"message":"Hello from DevOps Intern Task!","status":"running"}
 ```
 
-The legacy v1 syntax `docker-compose up -d --build` works as well. Compose reads `IMAGE_TAG` from `.env`.
+The legacy v1 syntax `docker-compose up -d --build` works the same way. The image is
+built from the local Dockerfile and tagged with `IMAGE_TAG` from `.env`. Tear it down
+with `docker compose down`.
+
+### Why the image is built this way
+
+- Multi-stage build on `node:22-alpine`: `npm ci` runs in a builder stage, and the
+  runtime stage only carries the app, so the final image stays around 60 MB
+- `npm ci --omit=dev` keeps lint tooling out of the image
+- Runs as the non-root `node` user with `NODE_ENV=production` and a container `HEALTHCHECK`
+- Compose adds `read_only`, `no-new-privileges`, and `init` for tighter container hygiene
 
 ## System health script
 
-`scripts/system_health.sh` logs CPU, memory, and disk usage with a timestamp into `health_log.txt` (created next to the script) and prints `[WARNING] Disk space high!` when disk usage exceeds 80%.
+`scripts/system_health.sh` samples CPU usage (from `/proc/stat` over one second),
+memory usage, and disk usage, then appends a timestamped line to `health_log.txt` next
+to the script. When disk usage exceeds 80% it also prints `[WARNING] Disk space high!`.
 
 ```bash
 chmod +x scripts/system_health.sh
-./scripts/system_health.sh
-```
-
-Without the executable bit it can also be run via the interpreter:
-
-```bash
-bash scripts/system_health.sh
+./scripts/system_health.sh        # or simply: bash scripts/system_health.sh
+cat scripts/health_log.txt
 ```
 
 Example output:
 
 ```text
-[2026-10-16 04:21:27] CPU: 85.6% | Memory: 79.6% | Disk: 85%
+[2026-10-16 04:29:37] CPU: 53.9% | Memory: 77.7% | Disk: 85%
 [WARNING] Disk space high!
 ```
 
-To monitor continuously, schedule it with cron (for example, every 5 minutes):
+To keep an eye on a machine, schedule it with cron:
 
 ```cron
 */5 * * * * /opt/demo_app/scripts/system_health.sh
 ```
 
-### Run the script on the VPS
+**Recommended extension — Slack / Mattermost alerts.** Instead of only logging, the
+warning branch could post to a webhook: Slack and Mattermost both accept the same
+simple `{"text": "..."}` payload, so adding `curl -X POST -H 'Content-Type: application/json'
+-d '{"text": "..."}' "$WEBHOOK"` to the disk-warning branch and reading
+`SLACK_WEBHOOK_URL` / `MATTERMOST_WEBHOOK_URL` from the environment is enough. Cron
+supplies the variables above the schedule line:
 
-The deploy job installs the script at `/opt/demo_app/scripts/system_health.sh`, so the evaluator can run it with the deploy key:
-
-```bash
-ssh -p <vps-port> <vps-user>@<vps-host>
-/opt/demo_app/scripts/system_health.sh
-cat /opt/demo_app/scripts/health_log.txt
+```cron
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/<your-webhook>
+MATTERMOST_WEBHOOK_URL=https://mattermost.example.com/hooks/<your-webhook>
+*/5 * * * * /opt/demo_app/scripts/system_health.sh
 ```
 
-Or remotely in one shot:
+After a deploy, the script is also available on the server, so you can run it over SSH:
 
 ```bash
 ssh -p <vps-port> <vps-user>@<vps-host> '/opt/demo_app/scripts/system_health.sh && cat /opt/demo_app/scripts/health_log.txt'
 ```
 
-Alternatively, clone the repository on the VPS and run `scripts/system_health.sh` from there.
+## CI/CD pipeline
 
-## End-to-end pipeline
+Every push to `main` triggers `.github/workflows/ci.yml`, which takes the commit all the
+way to a running container on the server:
 
 ```mermaid
 flowchart LR
     A["Developer<br/>git commit"] -->|"git push origin main"| B["GitHub repository"]
-    B -->|"push event triggers workflow"| C
+    B -->|"push triggers workflow"| C
 
     subgraph C["GitHub Actions CI/CD"]
         direction LR
-        C1["1. Lint and basic checks<br/>ESLint, node --check"] --> C2["2. Build Docker image<br/>verify no build errors<br/>+ container smoke test"] --> C3["3. Tag and push<br/>1.0.0 + sha-xxxxxxxx"] --> C4["4. Deploy over SSH<br/>key auth, custom port"]
+        C1["1. Lint and checks"] --> C2["2. Build image<br/>smoke test"] --> C3["3. Tag and push"] --> C4["4. Deploy over SSH"]
     end
 
     C3 -->|"docker push"| D[("Docker Hub<br/>rokonzaman/demo_app")]
-    D -->|"docker pull"| E["VPS<br/>deployment host"]
-    C4 -->|"ssh on custom port"| E
-    E --> F["Container<br/>demo_app<br/>:8080"]
+    D -->|"docker pull"| E["VPS<br/>/opt/demo_app"]
+    C4 -->|"ssh, custom port"| E
+    E --> F["demo_app container<br/>port 8080"]
 ```
 
-### Workflow (.github/workflows/ci.yml)
-
-Triggers on every push to `main` (and manual `workflow_dispatch`).
-
-| Job | Purpose |
+| Job | What it does |
 | --- | --- |
 | `lint` | `npm ci`, ESLint, `node --check server.js` |
-| `build` | Builds the Docker image with Buildx (no push) to verify there are no build errors, then starts the container and checks the JSON response |
-| `push-image` | Logs in to Docker Hub as `rokonzaman`, tags the image with the `package.json` version and `sha-<short-sha>`, and pushes it to `rokonzaman/demo_app` |
-| `deploy` | Installs Docker and Docker Compose on the VPS if missing, copies `docker-compose.yml`, `.env`, and `scripts/system_health.sh` (into `/opt/demo_app/scripts/`) over `scp` (key auth, custom port), runs `docker compose pull` and `up -d` with the `package.json` version tag via `sudo`, and verifies the JSON response |
+| `build` | Builds the image with Buildx (no push) to prove the build works, then starts it and checks the JSON response |
+| `push-image` | Tags the image with the `package.json` version plus a `sha-<short-sha>` tag for traceability, and pushes both to `rokonzaman/demo_app` |
+| `deploy` | Copies `docker-compose.yml`, `.env`, and the health script to `/opt/demo_app` with `scp`, installs Docker/Compose if needed, and runs `docker compose pull && up -d` over SSH |
 
-### Required GitHub secrets and variables
+### One-time setup
 
-Add these under **Settings → Secrets and variables → Actions**.
+The pipeline needs a few repository settings (Settings → Secrets and variables → Actions):
 
-Secrets (sensitive, encrypted):
+| Kind | Name | Value |
+| --- | --- | --- |
+| Secret | `DOCKERHUB_TOKEN` | Docker Hub access token for `rokonzaman` (Read & Write) |
+| Secret | `VPS_SSH_KEY` | Private deploy key for the VPS |
+| Variable | `VPS_HOST` | VPS IP address or hostname |
+| Variable | `VPS_USER` | SSH user, e.g. `ubuntu` |
+| Variable | `VPS_PORT` | Custom SSH port, e.g. `2222` |
 
-| Secret | Description |
-| --- | --- |
-| `DOCKERHUB_TOKEN` | Docker Hub access token for `rokonzaman` with Read & Write permission |
-| `VPS_SSH_KEY` | Private deploy key (`cat deploy_key`) |
+Create the deploy key once and authorize it on the server:
 
-Variables (non-sensitive, plaintext):
+```bash
+ssh-keygen -t ed25519 -C "github-actions" -f deploy_key -N ""
+ssh-copy-id -i deploy_key.pub -p <vps-port> <vps-user>@<vps-host>
+# put the output of `cat deploy_key` into the VPS_SSH_KEY secret
+```
 
-| Variable | Description |
-| --- | --- |
-| `VPS_HOST` | VPS IP address or hostname |
-| `VPS_USER` | SSH user on the VPS (e.g. `ubuntu`) |
-| `VPS_PORT` | Custom SSH port (e.g. `2222`) |
+The SSH user needs passwordless `sudo` (the default on most cloud images). Docker and
+the Compose plugin are installed by the workflow on its first run; just make sure the
+SSH port (and 8080, if the app should be publicly reachable) is open in the firewall.
 
-### Versioning
-
-The image tag comes from `version` in `package.json` (currently `1.0.2`) and from `IMAGE_TAG` in `.env` (no secrets in it, just the tag). To release a new version:
-
-1. Bump `version` in `package.json` and `IMAGE_TAG` in `.env`
-2. Commit and push to `main`
-
-CI then pushes `rokonzaman/demo_app:<version>` (plus `sha-<short-sha>` for traceability) and deploys that exact version. During deploy, CI writes `/opt/demo_app/.env` with the `package.json` version, so even manual `docker compose` commands on the VPS always use the deployed version.
-
-### Deploying to AWS (EC2)
-
-- Provision a small Ubuntu EC2 instance, attach an Elastic IP, and open the custom SSH port and 8080 in the security group (put an ALB or nginx in front if you need TLS)
-- Bootstrap it by installing Docker + the Compose plugin (cloud-init/user-data or the same SSH-based GitHub Actions deploy job used for the VPS), then `docker compose pull && docker compose up -d` from `/opt/demo_app` — the image comes from Docker Hub, nothing is built on the server
-- For more scale/availability, push to ECR instead of Docker Hub and run the container on ECS Fargate behind an ALB; for a single VM, EC2 + Compose with `restart: unless-stopped` is enough
-
-### Deploying to a VPS (SSH key auth, custom port)
-
-The `deploy` job runs automatically after `push-image`. It connects to the VPS with key auth on a custom SSH port, installs Docker and the Docker Compose plugin (Ubuntu/Debian) if they are missing, copies `docker-compose.yml`, `.env`, and `scripts/system_health.sh` (into `/opt/demo_app/scripts/`) from the repository to `/opt/demo_app`, and runs the stack with `sudo IMAGE_TAG=<package.json version> docker compose up -d`.
-
-Setup:
-
-1. Generate a dedicated deploy key pair:
-
-   ```bash
-   ssh-keygen -t ed25519 -C "github-actions" -f deploy_key -N ""
-   ```
-
-2. Install the public key on the VPS:
-
-   ```bash
-   ssh-copy-id -i deploy_key.pub -p <vps-port> <vps-user>@<vps-host>
-   ```
-
-3. Add repository variables `VPS_HOST`, `VPS_USER`, `VPS_PORT` and the secret `VPS_SSH_KEY` (the private key, i.e. `cat deploy_key`).
-
-4. The SSH user must be able to run `sudo` without a password prompt (default on most cloud images). Open the SSH port and port 8080 (if the app should be reachable publicly) in the firewall. Docker and Docker Compose are installed automatically on the first run.
-
-Manual deploy or restart on the VPS, if needed (`IMAGE_TAG` is read from `/opt/demo_app/.env`):
+To deploy or restart manually on the server, the compose file reads the version from
+`/opt/demo_app/.env`:
 
 ```bash
 cd /opt/demo_app
@@ -154,11 +149,19 @@ sudo docker compose pull
 sudo docker compose up -d
 ```
 
-Standalone equivalent:
+## Deploying to AWS (EC2)
 
-```bash
-sudo docker pull rokonzaman/demo_app:<version>
-sudo docker rm -f demo_app
-sudo docker run -d --name demo_app -p 8080:8080 --restart unless-stopped \
-  rokonzaman/demo_app:<version>
-```
+- **Provision**: a small Ubuntu EC2 instance with an Elastic IP; open the custom SSH
+  port and 8080 in the security group (add an ALB or nginx in front if you need TLS)
+- **Ship it the same way**: install Docker + Compose via cloud-init/user-data or reuse
+  this repo's deploy job, then `docker compose pull && docker compose up -d` from
+  `/opt/demo_app` — the image comes from Docker Hub, nothing is built on the server
+- **Going further**: push to ECR instead of Docker Hub and run it on ECS Fargate behind
+  an ALB; for a single VM, EC2 + Compose with `restart: unless-stopped` is enough
+
+## Versioning
+
+The image tag follows `version` in `package.json` (currently `1.0.2`), mirrored in `.env`
+for local runs. To release: bump both, commit, push to `main`. CI publishes
+`rokonzaman/demo_app:<version>` (plus the immutable `sha-<short-sha>` tag, handy for
+rollbacks like `IMAGE_TAG=sha-<short-sha> docker compose up -d`) and deploys it.
