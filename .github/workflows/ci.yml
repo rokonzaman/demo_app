@@ -154,7 +154,7 @@ jobs:
           username: ${{ vars.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ vars.VPS_PORT }}
-          source: "docker-compose.yml,.env"
+          source: "docker-compose.yml,.env,scripts/system_health.sh"
           target: /tmp/demo_app_deploy
           overwrite: true
 
@@ -167,9 +167,10 @@ jobs:
           port: ${{ vars.VPS_PORT }}
           script_stop: true
           script: |
-            sudo mkdir -p /opt/demo_app
+            sudo mkdir -p /opt/demo_app/scripts
             sudo install -m 0644 /tmp/demo_app_deploy/docker-compose.yml /opt/demo_app/docker-compose.yml
             sudo install -m 0644 /tmp/demo_app_deploy/.env /opt/demo_app/.env
+            sudo install -m 0755 /tmp/demo_app_deploy/scripts/system_health.sh /opt/demo_app/scripts/system_health.sh
             cd /opt/demo_app
             sudo IMAGE_TAG='${{ steps.version.outputs.version }}' docker compose pull
             sudo docker rm -f demo_app 2>/dev/null || true
