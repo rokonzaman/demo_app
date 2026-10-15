@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: rokonzaman/demo_app:${IMAGE_TAG:-1.0.0}
+    image: rokonzaman/demo_app:${IMAGE_TAG:?IMAGE_TAG is required (see .env)}
     container_name: demo_app
     init: true
     ports:

@@ -122,6 +122,9 @@ jobs:
         id: version
         run: echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
 
+      - name: Write .env with app version
+        run: echo "IMAGE_TAG=${{ steps.version.outputs.version }}" > .env
+
       - name: Install Docker and Docker Compose
         uses: appleboy/ssh-action@v1
         with:
@@ -151,7 +154,7 @@ jobs:
           username: ${{ vars.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ vars.VPS_PORT }}
-          source: docker-compose.yml
+          source: "docker-compose.yml,.env"
           target: /tmp/demo_app_deploy
           overwrite: true
 
@@ -166,6 +169,7 @@ jobs:
           script: |
             sudo mkdir -p /opt/demo_app
             sudo install -m 0644 /tmp/demo_app_deploy/docker-compose.yml /opt/demo_app/docker-compose.yml
+            sudo install -m 0644 /tmp/demo_app_deploy/.env /opt/demo_app/.env
             cd /opt/demo_app
             sudo IMAGE_TAG='${{ steps.version.outputs.version }}' docker compose pull
             sudo docker rm -f demo_app 2>/dev/null || true

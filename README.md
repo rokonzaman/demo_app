@@ -63,12 +63,12 @@ Variables (non-sensitive, plaintext):
 
 ### Versioning
 
-The image tag comes from `version` in `package.json` (currently `1.0.0`). To release a new version:
+The image tag comes from `version` in `package.json` (currently `1.0.1`) and from `IMAGE_TAG` in `.env` (no secrets in it, just the tag). To release a new version:
 
-1. Bump `version` in `package.json`
+1. Bump `version` in `package.json` and `IMAGE_TAG` in `.env`
 2. Commit and push to `main`
 
-CI then pushes `rokonzaman/demo_app:<version>` (plus `sha-<short-sha>` for traceability) and deploys that exact version. CI always passes the `package.json` version as `IMAGE_TAG`; `docker-compose.yml` falls back to `1.0.0` for local runs, so export `IMAGE_TAG=<version>` if you want to build a different tag locally.
+CI then pushes `rokonzaman/demo_app:<version>` (plus `sha-<short-sha>` for traceability) and deploys that exact version. During deploy, CI writes `/opt/demo_app/.env` with the `package.json` version, so even manual `docker compose` commands on the VPS always use the deployed version.
 
 ### Deploying to a VPS (SSH key auth, custom port)
 
@@ -92,19 +92,19 @@ Setup:
 
 4. The SSH user must be able to run `sudo` without a password prompt (default on most cloud images). Open the SSH port and port 8080 (if the app should be reachable publicly) in the firewall. Docker and Docker Compose are installed automatically on the first run.
 
-Manual deploy on the VPS, if needed:
+Manual deploy or restart on the VPS, if needed (`IMAGE_TAG` is read from `/opt/demo_app/.env`):
 
 ```bash
 cd /opt/demo_app
-sudo IMAGE_TAG=1.0.0 docker compose pull
-sudo IMAGE_TAG=1.0.0 docker compose up -d
+sudo docker compose pull
+sudo docker compose up -d
 ```
 
 Standalone equivalent:
 
 ```bash
-sudo docker pull rokonzaman/demo_app:1.0.0
+sudo docker pull rokonzaman/demo_app:<version>
 sudo docker rm -f demo_app
 sudo docker run -d --name demo_app -p 8080:8080 --restart unless-stopped \
-  rokonzaman/demo_app:1.0.0
+  rokonzaman/demo_app:<version>
 ```
