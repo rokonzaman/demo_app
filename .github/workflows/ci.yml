@@ -104,3 +104,63 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: push-image
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Install Docker and Docker Compose
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ vars.VPS_HOST }}
+          username: ${{ vars.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ vars.VPS_PORT }}
+          script_stop: true
+          script: |
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y ca-certificates curl
+              sudo install -m 0755 -d /etc/apt/keyrings
+              sudo curl -fsSL "https://download.docker.com/linux/$(. /etc/os-release && echo "$ID")/gpg" -o /etc/apt/keyrings/docker.asc
+              sudo chmod a+r /etc/apt/keyrings/docker.asc
+              echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$(. /etc/os-release && echo "$ID") $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+              sudo apt-get update
+              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            fi
+            sudo docker --version
+            sudo docker compose version
+
+      - name: Deploy to /opt/demo_app
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ vars.VPS_HOST }}
+          username: ${{ vars.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ vars.VPS_PORT }}
+          script_stop: true
+          script: |
+            sudo mkdir -p /opt/demo_app
+            sudo tee /opt/demo_app/docker-compose.yml >/dev/null <<'EOF'
+            services:
+              demo_app:
+                image: rokonzaman/demo_app:latest
+                container_name: demo_app
+                init: true
+                ports:
+                  - "8080:8080"
+                environment:
+                  PORT: "8080"
+                read_only: true
+                security_opt:
+                  - no-new-privileges:true
+                restart: unless-stopped
+            EOF
+            cd /opt/demo_app
+            sudo docker compose pull
+            sudo docker rm -f demo_app 2>/dev/null || true
+            sudo docker compose up -d --remove-orphans
+            sleep 3
+            sudo docker exec demo_app wget -qO- http://127.0.0.1:8080/
