@@ -146,7 +146,7 @@ sudo docker compose up -d
 
 ## Versioning
 
-The image tag follows `version` in `package.json` (currently `1.0.2`), mirrored in `.env`
+The image tag follows `version` in `package.json`, mirrored in `.env`
 for local runs. To release: bump both, commit, push to `main`. CI publishes
 `rokonzaman/demo_app:<version>` (plus the immutable `sha-<short-sha>` tag, handy for
 rollbacks like `IMAGE_TAG=sha-<short-sha> docker compose up -d`) and deploys it.
