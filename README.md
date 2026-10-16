@@ -1,4 +1,4 @@
-# DevOps Intern Task
+# DevOps Task
 
 A minimal Node.js web service that replies to `GET /` with:
 
@@ -31,10 +31,6 @@ docker compose up -d --build
 curl http://localhost:8080/
 # {"message":"Hello from DevOps Intern Task!","status":"running"}
 ```
-
-The legacy v1 syntax `docker-compose up -d --build` works the same way. The image is
-built from the local Dockerfile and tagged with `IMAGE_TAG` from `.env`. Tear it down
-with `docker compose down`.
 
 ### Why the image is built this way
 
@@ -69,23 +65,12 @@ To keep an eye on a machine, schedule it with cron:
 */5 * * * * /opt/demo_app/scripts/system_health.sh
 ```
 
-**Recommended extension — Slack / Mattermost alerts.** Instead of only logging, the
-warning branch could post to a webhook: Slack and Mattermost both accept the same
-simple `{"text": "..."}` payload, so adding `curl -X POST -H 'Content-Type: application/json'
--d '{"text": "..."}' "$WEBHOOK"` to the disk-warning branch and reading
-`SLACK_WEBHOOK_URL` / `MATTERMOST_WEBHOOK_URL` from the environment is enough. Cron
-supplies the variables above the schedule line:
-
-```cron
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/<your-webhook>
-MATTERMOST_WEBHOOK_URL=https://mattermost.example.com/hooks/<your-webhook>
-*/5 * * * * /opt/demo_app/scripts/system_health.sh
-```
+Recommended extension — Slack / Mattermost alerts.
 
 After a deploy, the script is also available on the server, so you can run it over SSH:
 
 ```bash
-ssh -p <vps-port> <vps-user>@<vps-host> '/opt/demo_app/scripts/system_health.sh && cat /opt/demo_app/scripts/health_log.txt'
+ssh -p <vps-port> <vps-user>@<vps-host> 'sudo /opt/demo_app/scripts/system_health.sh && cat /opt/demo_app/scripts/health_log.txt'
 ```
 
 ## CI/CD pipeline
@@ -125,7 +110,7 @@ The pipeline needs a few repository settings (Settings → Secrets and variables
 | Secret | `DOCKERHUB_TOKEN` | Docker Hub access token for `rokonzaman` (Read & Write) |
 | Secret | `VPS_SSH_KEY` | Private deploy key for the VPS |
 | Variable | `VPS_HOST` | VPS IP address or hostname |
-| Variable | `VPS_USER` | SSH user, e.g. `ubuntu` |
+| Variable | `VPS_USER` | SSH user, e.g. `demo_user` |
 | Variable | `VPS_PORT` | Custom SSH port, e.g. `2222` |
 
 Create the deploy key once and authorize it on the server:

@@ -1,6 +1,6 @@
 {
   "name": "demo_app",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Minimal Node.js HTTP service returning JSON on /",
   "main": "server.js",
